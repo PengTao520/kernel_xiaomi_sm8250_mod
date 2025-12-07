@@ -1,0 +1,110 @@
+name: Build Devices Kernel (编译内核驱动)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_name:
+        description: "选择设备"
+        required: true
+        type: choice
+        options:
+          - psyche
+          - umi
+          - munch
+          - cmi
+          - cas
+          - apollo
+          - alioth
+          - elish
+          - enuma
+          - dagu
+          - pipa
+        default: cas
+      kernelsu_version:
+        description: "选择 KernelSU 版本"
+        required: true
+        type: choice
+        options:
+          - 全部编译
+          - SukiSU
+          - NoKernelSU
+        default: SukiSU
+      version_name:
+        description: '自定义版本名(如4.19.157后面的字符)'
+        required: false
+        type: string
+      build_time:
+        description: '设置内核构建时间'
+        required: false
+        type: string
+      get_manager:
+        description: '获取最新KSU管理器和SUS模块?'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: 释放源代码
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: 安装依赖
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3 unzip
+
+    - name: 设置 proton-clang 工具链
+      run: |
+        mkdir -p $HOME/proton-clang
+        cd $HOME/proton-clang
+        wget https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip
+        unzip 20210522.zip
+        cd $GITHUB_WORKSPACE
+        
+    - name: 编译内核
+      run: |
+       if [ "${{ inputs.kernelsu_version }}" == "全部编译" ]; then
+         bash build.sh ${{ inputs.device_name }}
+         bash build.sh ${{ inputs.device_name }} ksu
+       elif [ "${{ inputs.kernelsu_version }}" == "SukiSU" ]; then
+         bash build.sh ${{ inputs.device_name }} ksu
+       elif [ "${{ inputs.kernelsu_version }}" == "NoKernelSU" ]; then
+         bash build.sh ${{ inputs.device_name }}
+       fi
+        
+    - name: Upload zips for ${{ inputs.device_name }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: zips-${{ inputs.device_name }}
+        path: |
+          Kernel_MIUI_${{ inputs.device_name }}*.zip
+          Kernel_AOSP_${{ inputs.device_name }}*.zip
+
+  release:
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+    - name: 下载所有工具
+      uses: actions/download-artifact@v4
+      with:
+        path: ./release_zips
+
+    - name: 获取日期和短 SHA
+      id: vars
+      run: |
+        echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+        echo "sha=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+
+    - name: 创建 GitHub 版本
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: build-${{ steps.vars.outputs.date }}-${{ steps.vars.outputs.sha }}
+        name: "Kernel Build ${{ steps.vars.outputs.date }}-${{ steps.vars.outputs.sha }}"
+        body: "Automated kernel build for commit ${{ github.sha }}"
+        files: ./release_zips/**/*.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
